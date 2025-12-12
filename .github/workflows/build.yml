@@ -1,0 +1,179 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: 'Agent to build (or "all")'
+        required: false
+        default: 'all'
+      runtime:
+        description: 'Runtime to build (or "all")'
+        required: false
+        default: 'all'
+      variant:
+        description: 'Variant to build (or "all")'
+        required: false
+        default: 'all'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/loom-agent
+
+jobs:
+  # Generate the build matrix dynamically
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Generate build matrix
+        id: set-matrix
+        run: |
+          # Define the full matrix
+          AGENTS='["claude"]'
+          RUNTIMES='["node20", "node22", "python3.11", "python3.12", "multi"]'
+          VARIANTS='["minimal", "full"]'
+
+          # Filter based on workflow_dispatch inputs
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.agent }}" != "all" ]; then
+              AGENTS='["${{ inputs.agent }}"]'
+            fi
+            if [ "${{ inputs.runtime }}" != "all" ]; then
+              RUNTIMES='["${{ inputs.runtime }}"]'
+            fi
+            if [ "${{ inputs.variant }}" != "all" ]; then
+              VARIANTS='["${{ inputs.variant }}"]'
+            fi
+          fi
+
+          # Create matrix JSON
+          MATRIX=$(cat <<EOF
+          {
+            "agent": $AGENTS,
+            "runtime": $RUNTIMES,
+            "variant": $VARIANTS
+          }
+          EOF
+          )
+          echo "matrix=$(echo $MATRIX | jq -c .)" >> $GITHUB_OUTPUT
+
+  build:
+    needs: matrix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with agent-runtime-variant
+            type=raw,value=${{ matrix.agent }}-${{ matrix.runtime }}-${{ matrix.variant }}
+            # Tag with version if this is a release
+            type=semver,pattern={{version}},suffix=-${{ matrix.agent }}-${{ matrix.runtime }}-${{ matrix.variant }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            AGENT=${{ matrix.agent }}
+            RUNTIME=${{ matrix.runtime }}
+            VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.agent }}-${{ matrix.runtime }}-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.agent }}-${{ matrix.runtime }}-${{ matrix.variant }}
+
+      - name: Test image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.agent }}-${{ matrix.runtime }}-${{ matrix.variant }} \
+            bash -c "which warp && echo 'Warp OK' && which claude && echo 'Claude OK'"
+
+  # Create convenience tags after all builds complete
+  tag-latest:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create latest tag for default image
+        run: |
+          # Tag claude-node20-full as 'latest'
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-node20-full
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-node20-full ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Tag claude-multi-full as 'claude-multi'
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-multi-full
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-multi-full ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-multi
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:claude-multi
+
+  summary:
+    needs: [build, tag-latest]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Images pushed to \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Tags" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`latest\` | Claude + Node 20 + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-multi\` | Claude + Multi-runtime + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-node20-minimal\` | Claude + Node 20 + Minimal |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-node20-full\` | Claude + Node 20 + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-node22-minimal\` | Claude + Node 22 + Minimal |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-node22-full\` | Claude + Node 22 + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-python3.11-minimal\` | Claude + Python 3.11 + Minimal |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-python3.11-full\` | Claude + Python 3.11 + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-python3.12-minimal\` | Claude + Python 3.12 + Minimal |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-python3.12-full\` | Claude + Python 3.12 + Full |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-multi-minimal\` | Claude + Multi + Minimal |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`claude-multi-full\` | Claude + Multi + Full |" >> $GITHUB_STEP_SUMMARY

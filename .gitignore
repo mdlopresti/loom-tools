@@ -1,0 +1,18 @@
+# Build artifacts
+*.tar
+*.tar.gz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local testing
+.env
+.env.local
+test-output/
