@@ -104,10 +104,12 @@ docker run -it --rm \
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes (Claude) | API key for Claude |
-| `NATS_URL` | Yes | NATS server URL (supports `nats://` and `wss://`) |
+| `NATS_URL` | For Loom | NATS server URL for multi-agent coordination (supports `nats://` and `wss://`) |
 | `PROJECT_ID` | No | Project identifier for Loom isolation (default: `default`) |
 | `AGENT_ID` | No | Custom agent ID (default: auto-generated UUID) |
 | `AGENT_CAPABILITIES` | No | Comma-separated capabilities (default: from runtime) |
+
+> **Note**: These images work standalone without NATS. Set `NATS_URL` only if you want agents to communicate via Loom.
 
 ## Image Architecture
 
@@ -202,9 +204,11 @@ All example workflows include security measures to prevent unauthorized usage:
 
 ## Related
 
-- [Loom](https://github.com/mdlopresti/loom) - Multi-agent infrastructure
-- [Warp](https://github.com/mdlopresti/loom-warp) - MCP server for agent communication
-- [Weft](https://github.com/mdlopresti/loom-weft) - Coordinator service
+- [Loom](https://github.com/mdlopresti/loom) — Multi-agent infrastructure
+- [Warp](https://github.com/mdlopresti/loom-warp) — MCP server for messaging
+- [Pattern](https://github.com/mdlopresti/loom-pattern) — Agent memory
+- [Weft](https://github.com/mdlopresti/loom-weft) — Work coordinator
+- [Shuttle](https://github.com/mdlopresti/loom-shuttle) — Fleet management CLI
 
 ## License
 
