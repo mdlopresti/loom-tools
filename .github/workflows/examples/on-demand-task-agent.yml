@@ -1,0 +1,148 @@
+# Example: On-Demand Task Agent
+# This workflow runs an AI agent to execute arbitrary tasks on demand
+#
+# Copy this file to your repository's .github/workflows/ directory
+# Required secrets:
+#   - ANTHROPIC_API_KEY: Your Anthropic API key
+#   - NATS_URL: (Optional) NATS server URL for Loom coordination
+#
+# SECURITY: This workflow uses workflow_dispatch which can only be triggered by
+# users with write access to the repository. The permissions are already restricted.
+
+name: On-Demand Task Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task for the agent to execute'
+        required: true
+        type: string
+      runtime:
+        description: 'Runtime environment'
+        required: false
+        default: 'node20'
+        type: choice
+        options:
+          - node20
+          - node22
+          - python3.11
+          - python3.12
+          - multi
+      allow_writes:
+        description: 'Allow agent to modify files'
+        required: false
+        default: false
+        type: boolean
+      create_pr:
+        description: 'Create PR with changes (if writes enabled)'
+        required: false
+        default: true
+        type: boolean
+
+# Prevent multiple agents running simultaneously
+concurrency:
+  group: task-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/mdlopresti/loom-tools:claude-${{ inputs.runtime }}-full
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure git
+        run: |
+          git config --global user.name "Loom Agent"
+          git config --global user.email "loom-agent@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Execute task (read-only)
+        if: ${{ !inputs.allow_writes }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NATS_URL: ${{ secrets.NATS_URL }}
+          LOOM_PROJECT_ID: ${{ github.repository }}
+          LOOM_AGENT_ID: task-agent-${{ github.run_id }}
+        run: |
+          # Start Warp in background if NATS_URL is configured
+          if [ -n "$NATS_URL" ]; then
+            warp &
+            sleep 2
+          fi
+
+          claude --print --dangerously-skip-permissions \
+            "${{ inputs.task }}
+
+            Note: You are in read-only mode. Analyze the codebase and provide recommendations,
+            but do not attempt to modify any files."
+
+      - name: Execute task (with writes)
+        if: ${{ inputs.allow_writes }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NATS_URL: ${{ secrets.NATS_URL }}
+          LOOM_PROJECT_ID: ${{ github.repository }}
+          LOOM_AGENT_ID: task-agent-${{ github.run_id }}
+        run: |
+          # Start Warp in background if NATS_URL is configured
+          if [ -n "$NATS_URL" ]; then
+            warp &
+            sleep 2
+          fi
+
+          claude --dangerously-skip-permissions \
+            "${{ inputs.task }}
+
+            You may modify files as needed to complete this task.
+            Make clean, focused changes and explain what you're doing."
+
+      - name: Check for changes
+        if: ${{ inputs.allow_writes }}
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create branch and PR
+        if: ${{ inputs.allow_writes && inputs.create_pr && steps.changes.outputs.has_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="agent/task-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Agent task: ${{ inputs.task }}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "Agent: ${{ inputs.task }}" \
+            --body "## Task Executed by AI Agent
+
+            **Task:** ${{ inputs.task }}
+
+            **Runtime:** ${{ inputs.runtime }}
+
+            **Triggered by:** @${{ github.actor }}
+
+            ---
+            *Created by [Loom Tools](https://github.com/mdlopresti/loom-tools)*" \
+            --head "$BRANCH"
+
+      - name: Commit directly (no PR)
+        if: ${{ inputs.allow_writes && !inputs.create_pr && steps.changes.outputs.has_changes == 'true' }}
+        run: |
+          git add -A
+          git commit -m "Agent task: ${{ inputs.task }}"
+          git push

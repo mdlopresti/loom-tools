@@ -111,21 +111,21 @@ docker run -it --rm \
 
 ## Image Architecture
 
-```
-┌─────────────────────────────────────────┐
-│            Agent Layer                   │
-│  (Claude Code / Copilot CLI / Aider)    │
-├─────────────────────────────────────────┤
-│           Variant Layer                  │
-│     (minimal: essentials only)          │
-│     (full: + dev tools, linters)        │
-├─────────────────────────────────────────┤
-│           Runtime Layer                  │
-│  (Node 20/22, Python 3.11/3.12, Multi)  │
-├─────────────────────────────────────────┤
-│            Base Layer                    │
-│   (Ubuntu 22.04 + Warp + git + curl)    │
-└─────────────────────────────────────────┘
+```mermaid
+block-beta
+    columns 1
+    block:agent["Agent Layer"]
+        A["Claude Code / Copilot CLI / Aider"]
+    end
+    block:variant["Variant Layer"]
+        V["minimal: essentials only | full: + dev tools, linters"]
+    end
+    block:runtime["Runtime Layer"]
+        R["Node 20/22 | Python 3.11/3.12 | Multi"]
+    end
+    block:base["Base Layer"]
+        B["Ubuntu 22.04 + Warp + git + curl"]
+    end
 ```
 
 ## Building Locally
@@ -154,6 +154,37 @@ RUN npm install -g your-custom-tool
 # Add custom configuration
 COPY .claude-config /root/.config/claude/
 ```
+
+## Example Workflows
+
+Ready-to-use GitHub Actions workflows are available in [`.github/workflows/examples/`](.github/workflows/examples/). Copy these to your repository's `.github/workflows/` directory.
+
+| Example | Description | Trigger |
+|---------|-------------|---------|
+| [Code Review Agent](https://github.com/mdlopresti/loom-tools/blob/main/.github/workflows/examples/code-review-agent.yml) | Automatically reviews pull requests | `pull_request` |
+| [Issue Triage Agent](https://github.com/mdlopresti/loom-tools/blob/main/.github/workflows/examples/issue-triage-agent.yml) | Analyzes and labels new issues | `issues: opened` |
+| [On-Demand Task Agent](https://github.com/mdlopresti/loom-tools/blob/main/.github/workflows/examples/on-demand-task-agent.yml) | Execute arbitrary tasks on demand | `workflow_dispatch` |
+| [Scheduled Maintenance](https://github.com/mdlopresti/loom-tools/blob/main/.github/workflows/examples/scheduled-maintenance-agent.yml) | Weekly maintenance reports | `schedule` (cron) |
+| [Loom Coordinated Agent](https://github.com/mdlopresti/loom-tools/blob/main/.github/workflows/examples/loom-coordinated-agent.yml) | Multi-agent coordination via Loom | `workflow_dispatch` |
+
+### Security Considerations
+
+All example workflows include security measures to prevent unauthorized usage:
+
+1. **Author Association Checks**: PR and issue workflows verify the author is a collaborator, member, or owner
+2. **Fork Protection**: PR reviews only run on non-fork PRs to prevent API key exposure
+3. **Workflow Dispatch**: On-demand workflows can only be triggered by users with write access
+4. **Scheduled Workflows**: Only run on the default branch (inherently safe)
+5. **Concurrency Controls**: Prevent multiple simultaneous runs of the same agent
+
+### Required Secrets
+
+| Secret | Required For | Description |
+|--------|--------------|-------------|
+| `ANTHROPIC_API_KEY` | All workflows | Your Anthropic API key |
+| `NATS_URL` | Loom coordination | NATS server URL (e.g., `nats://host:4222`) |
+| `NATS_USER` | Optional | NATS authentication username |
+| `NATS_PASS` | Optional | NATS authentication password |
 
 ## Roadmap
 

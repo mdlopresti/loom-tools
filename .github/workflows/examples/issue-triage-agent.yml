@@ -1,0 +1,109 @@
+# Example: Issue Triage Agent
+# This workflow runs an AI agent to analyze and label new issues
+#
+# Copy this file to your repository's .github/workflows/ directory
+# Required secrets:
+#   - ANTHROPIC_API_KEY: Your Anthropic API key
+#
+# Required repository labels:
+#   - bug, enhancement, question, documentation, good-first-issue
+#   - priority-high, priority-medium, priority-low
+
+name: Issue Triage Agent
+
+on:
+  issues:
+    types: [opened]
+
+# IMPORTANT: This workflow only triggers on issue events
+# which can only be created by people with write access or higher
+# However, we still add author association checks for defense in depth
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    # Security: Additional check - only triage issues from known authors
+    # Remove this condition if you want to triage all issues
+    if: |
+      github.event.issue.author_association == 'OWNER' ||
+      github.event.issue.author_association == 'MEMBER' ||
+      github.event.issue.author_association == 'COLLABORATOR' ||
+      github.event.issue.author_association == 'CONTRIBUTOR'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/mdlopresti/loom-tools:claude-node20-minimal
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Analyze issue
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude --print --dangerously-skip-permissions \
+            "Analyze this GitHub issue and suggest appropriate labels.
+
+            Issue Title: ${{ github.event.issue.title }}
+            Issue Body: ${{ github.event.issue.body }}
+
+            Available labels:
+            - Type: bug, enhancement, question, documentation
+            - Priority: priority-high, priority-medium, priority-low
+            - Difficulty: good-first-issue (for simple, well-defined issues)
+
+            Respond with ONLY a JSON object in this exact format:
+            {
+              \"labels\": [\"label1\", \"label2\"],
+              \"summary\": \"One sentence summary of the issue\"
+            }
+
+            Choose 2-4 labels that best categorize this issue.
+            Do not include any other text, only the JSON." \
+            > /tmp/triage.json
+
+      - name: Apply labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let triage;
+
+            try {
+              const content = fs.readFileSync('/tmp/triage.json', 'utf8');
+              // Extract JSON from potential markdown code blocks
+              const jsonMatch = content.match(/\{[\s\S]*\}/);
+              if (!jsonMatch) throw new Error('No JSON found');
+              triage = JSON.parse(jsonMatch[0]);
+            } catch (e) {
+              console.log('Failed to parse triage response:', e.message);
+              return;
+            }
+
+            // Validate labels exist before applying
+            const validLabels = ['bug', 'enhancement', 'question', 'documentation',
+                                 'priority-high', 'priority-medium', 'priority-low',
+                                 'good-first-issue'];
+            const labelsToApply = triage.labels.filter(l => validLabels.includes(l));
+
+            if (labelsToApply.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: labelsToApply
+              });
+            }
+
+            // Add a comment with the summary
+            if (triage.summary) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `**AI Summary:** ${triage.summary}\n\n---\n*Auto-triaged by [Loom Tools](https://github.com/mdlopresti/loom-tools)*`
+              });
+            }

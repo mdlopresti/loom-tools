@@ -1,0 +1,178 @@
+# Example: Loom-Coordinated Agent
+# This workflow demonstrates multi-agent coordination using Loom infrastructure
+#
+# Copy this file to your repository's .github/workflows/ directory
+# Required secrets:
+#   - ANTHROPIC_API_KEY: Your Anthropic API key
+#   - NATS_URL: NATS server URL for Loom coordination (required for this example)
+#   - NATS_USER: (Optional) NATS username
+#   - NATS_PASS: (Optional) NATS password
+#
+# This agent registers with Loom, can receive work from other agents,
+# and coordinates through shared channels.
+
+name: Loom Coordinated Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      capability:
+        description: 'Agent capability to register'
+        required: true
+        default: 'typescript'
+        type: choice
+        options:
+          - typescript
+          - python
+          - code-review
+          - testing
+          - documentation
+      idle_timeout:
+        description: 'Idle timeout in minutes (0 = run once)'
+        required: false
+        default: '5'
+        type: string
+      initial_task:
+        description: 'Initial task (optional, will also accept work from Loom)'
+        required: false
+        type: string
+
+# Only one agent per capability
+concurrency:
+  group: loom-agent-${{ inputs.capability }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/mdlopresti/loom-tools:claude-multi-full
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure git
+        run: |
+          git config --global user.name "Loom Agent"
+          git config --global user.email "loom-agent@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Validate NATS connection
+        env:
+          NATS_URL: ${{ secrets.NATS_URL }}
+        run: |
+          if [ -z "$NATS_URL" ]; then
+            echo "Error: NATS_URL secret is required for Loom coordination"
+            exit 1
+          fi
+          echo "NATS URL configured: ${NATS_URL%@*}@***"
+
+      - name: Run Loom-coordinated agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NATS_URL: ${{ secrets.NATS_URL }}
+          NATS_USER: ${{ secrets.NATS_USER }}
+          NATS_PASS: ${{ secrets.NATS_PASS }}
+          LOOM_PROJECT_ID: ${{ github.repository }}
+          LOOM_AGENT_ID: gh-${{ inputs.capability }}-${{ github.run_id }}
+          CAPABILITY: ${{ inputs.capability }}
+          IDLE_TIMEOUT: ${{ inputs.idle_timeout }}
+          INITIAL_TASK: ${{ inputs.initial_task }}
+        run: |
+          # Start Warp MCP server in background
+          warp &
+          WARP_PID=$!
+          sleep 3
+
+          # Verify Warp is running
+          if ! kill -0 $WARP_PID 2>/dev/null; then
+            echo "Error: Warp MCP server failed to start"
+            exit 1
+          fi
+
+          echo "Warp MCP server running (PID: $WARP_PID)"
+
+          # Build the agent prompt
+          AGENT_PROMPT="You are a Loom-coordinated AI agent running in GitHub Actions.
+
+          Your Configuration:
+          - Agent ID: $LOOM_AGENT_ID
+          - Capability: $CAPABILITY
+          - Project: $LOOM_PROJECT_ID
+          - Idle Timeout: ${IDLE_TIMEOUT} minutes
+
+          Instructions:
+          1. First, use the Loom MCP tools to register yourself:
+             - Call register_agent with agentType='worker' and capabilities=['$CAPABILITY']
+
+          2. Send a message to the 'parallel-work' channel announcing you are online:
+             - Include your capability and that you're ready to accept work
+
+          3. Check for any work in your inbox using read_direct_messages
+
+          4. If you have an initial task, execute it:
+             Initial Task: ${INITIAL_TASK:-None}
+
+          5. Then enter a work loop:
+             - Use claim_work to check for capability='$CAPABILITY' work items
+             - Execute any claimed work
+             - Report results back through Loom channels
+
+          6. If idle_timeout is 0, complete any initial task and exit
+             If idle_timeout > 0, continue checking for work until timeout
+
+          7. Before exiting, deregister yourself using deregister_agent
+
+          You have access to the repository at the current working directory.
+          You may read and modify files as needed to complete tasks."
+
+          # Run Claude with the agent prompt
+          if [ "$IDLE_TIMEOUT" = "0" ]; then
+            # One-shot mode
+            claude --dangerously-skip-permissions "$AGENT_PROMPT"
+          else
+            # Long-running mode with timeout
+            timeout "${IDLE_TIMEOUT}m" claude --dangerously-skip-permissions "$AGENT_PROMPT" || true
+          fi
+
+          # Cleanup
+          echo "Agent session complete, cleaning up..."
+          kill $WARP_PID 2>/dev/null || true
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create PR with changes
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="agent/${{ inputs.capability }}-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Loom agent (${{ inputs.capability }}): automated changes"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "Loom Agent: ${{ inputs.capability }} changes" \
+            --body "## Automated Changes by Loom Agent
+
+            **Capability:** ${{ inputs.capability }}
+            **Agent ID:** gh-${{ inputs.capability }}-${{ github.run_id }}
+            **Triggered by:** @${{ github.actor }}
+
+            ---
+            *Created by a Loom-coordinated agent via [Loom Tools](https://github.com/mdlopresti/loom-tools)*" \
+            --head "$BRANCH"
