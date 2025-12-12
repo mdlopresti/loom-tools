@@ -1,4 +1,4 @@
-# Unified Dockerfile for Loom Agent Images
+# Unified Dockerfile for Loom Tools
 # Builds any combination of agent + runtime + variant using build args
 #
 # Build args:
@@ -7,7 +7,7 @@
 #   VARIANT: minimal (default), full
 #
 # Example:
-#   docker build --build-arg AGENT=claude --build-arg RUNTIME=node22 --build-arg VARIANT=full -t loom-agent:claude-node22-full .
+#   docker build --build-arg AGENT=claude --build-arg RUNTIME=node22 --build-arg VARIANT=full -t loom-tools:claude-node22-full .
 
 ARG AGENT=claude
 ARG RUNTIME=node20
@@ -18,7 +18,7 @@ ARG VARIANT=minimal
 # =============================================================================
 FROM ubuntu:22.04 AS base
 
-LABEL org.opencontainers.image.source="https://github.com/mdlopresti/loom-agent-images"
+LABEL org.opencontainers.image.source="https://github.com/mdlopresti/loom-tools"
 LABEL org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive

@@ -1,4 +1,4 @@
-# Loom Agent Images
+# Loom Tools
 
 Pre-built Docker images for running AI coding agents with [Loom](https://github.com/mdlopresti/loom) infrastructure.
 
@@ -15,7 +15,7 @@ These images provide ready-to-use environments for running AI coding agents (Cla
 
 ## Image Matrix
 
-Images are tagged as: `ghcr.io/mdlopresti/loom-agent:{agent}-{runtime}-{variant}`
+Images are tagged as: `ghcr.io/mdlopresti/loom-tools:{agent}-{runtime}-{variant}`
 
 ### Available Images
 
@@ -29,6 +29,7 @@ Images are tagged as: `ghcr.io/mdlopresti/loom-agent:{agent}-{runtime}-{variant}
 | Claude Code | Python 3.11 | full | `claude-python3.11-full` | ~900MB |
 | Claude Code | Python 3.12 | minimal | `claude-python3.12-minimal` | ~600MB |
 | Claude Code | Python 3.12 | full | `claude-python3.12-full` | ~900MB |
+| Claude Code | Multi | minimal | `claude-multi-minimal` | ~1.0GB |
 | Claude Code | Multi | full | `claude-multi-full` | ~1.2GB |
 
 ### Variants
@@ -65,7 +66,7 @@ jobs:
   agent:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/mdlopresti/loom-agent:claude-node20-full
+      image: ghcr.io/mdlopresti/loom-tools:claude-node20-full
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       NATS_URL: ${{ secrets.NATS_URL }}
@@ -86,7 +87,7 @@ jobs:
 
 ```bash
 # Pull the image
-docker pull ghcr.io/mdlopresti/loom-agent:claude-node20-full
+docker pull ghcr.io/mdlopresti/loom-tools:claude-node20-full
 
 # Run interactively
 docker run -it --rm \
@@ -94,7 +95,7 @@ docker run -it --rm \
   -e NATS_URL=nats://localhost:4222 \
   -v $(pwd):/workspace \
   -w /workspace \
-  ghcr.io/mdlopresti/loom-agent:claude-node20-full \
+  ghcr.io/mdlopresti/loom-tools:claude-node20-full \
   bash
 ```
 
@@ -145,7 +146,7 @@ REGISTRY=myregistry.io ./build.sh claude node20 full
 Create a custom Dockerfile that extends these images:
 
 ```dockerfile
-FROM ghcr.io/mdlopresti/loom-agent:claude-node20-full
+FROM ghcr.io/mdlopresti/loom-tools:claude-node20-full
 
 # Add your project-specific tools
 RUN npm install -g your-custom-tool
